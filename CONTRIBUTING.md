@@ -1,0 +1,1 @@
+# All half decently written, purposeful pull requests for features, edits and optimizations coinciding with the aim of The Mercy Project will be merged. The standards are low. Please do not pull untested code, you will be excluded from future pull reviews.
