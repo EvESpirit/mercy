@@ -1,12 +1,12 @@
 import sqlite3
-import multiprocessing
-from os import path, system, stat
+import multiprocessing as mp
+from os import path, stat, system
 from sys import exit
 
 # Check if reference.db and scanned.db exist
-if not path.isfile('reference.db')\
-        or not path.isfile('scanned.db')\
-        or stat('reference.db').st_size < 16384\
+if not path.isfile('reference.db') \
+        or not path.isfile('scanned.db') \
+        or stat('reference.db').st_size < 16384 \
         or stat('scanned.db').st_size < 16384:
     print("\nThe reference or scanned file databases are missing or too small to contain useful information. Would "
           "you like to run scanner.py to either generate a reference copy or run a scan? (y/Y or any key to "
@@ -17,6 +17,7 @@ if not path.isfile('reference.db')\
 
     else:
         exit()
+
 c1 = path.exists("reference.db")
 c2 = path.exists("scanned.db")
 c3 = stat('reference.db').st_size > 102400
@@ -31,8 +32,8 @@ if c1 and c2 and c3 and c4:
     cursor1 = db1.cursor()
     cursor2 = db2.cursor()
 
-    db1_data = cursor1.execute("SELECT * FROM crc32").fetchall()
-    db2_data = cursor2.execute("SELECT * FROM crc32").fetchall()
+    db1D = cursor1.execute("SELECT * FROM crc32").fetchall()
+    db2D = cursor2.execute("SELECT * FROM crc32").fetchall()
 else:
     print("\nThe scanned file database is missing or too small to contain useful information. Would "
           "you like to run scanner.py to run a scan right now? (y/Y or any key to "
@@ -45,49 +46,96 @@ else:
         exit()
 
 # Divide the data into multiple sets
-num_cores = multiprocessing.cpu_count()
-db1_data_sets = [db1_data[i:i + len(db1_data) // num_cores] for i in
-                 range(0, len(db1_data), len(db1_data) // num_cores)]
-db2_data_sets = [db2_data[i:i + len(db2_data) // num_cores] for i in
-                 range(0, len(db2_data), len(db2_data) // num_cores)]
+cores = mp.cpu_count()
+db1_data_sets = [db1D[i:i + len(db1D) // cores] for i in
+                 range(0, len(db1D), len(db1D) // cores)]
+db2_data_sets = [db2D[i:i + len(db2D) // cores] for i in
+                 range(0, len(db2D), len(db2D) // cores)]
 
 # Create a Queue to store the discrepancies
-discrepancy_queue = multiprocessing.Queue()
+resultQu = mp.Queue()
 
 # Create a Value to store the number of tested files
-tested_files = multiprocessing.Value('i', 0)
+tested_files = mp.Value('i', 0)
 
+# Create a global variable to store user input
+choice = None
+
+# Ask the user for input
+def uC():
+    global choice
+    choice = input("Do you wish to scan log extensions as well? These are changed often by the system internally and hence "
+              "are very likely to show up during scans. (y/n): ")
+
+    if choice == "y" or choice == "Y":
+        print("\nLog extensions will be scanned.")
+        return True
+    else:
+        print("\nLog extensions will not be scanned.")
+        return False
 
 # Create multiple processes to compare the data
-def compare_data(db1_dat, db2_dat, discrepancy_q, fTested):
+def dCompareSmart(dbaData, dbdData, resultQ, fTested):
     fOK = 0
-    discrepanc = []
-    for row1 in db1_dat:
+    result = []
+    logExtensions = set(['.evtx', '.log', '.txt', '.db'])  # Create a set of extensions
+
+    for row1 in dbaData:
+        # Check for file extensions and skip any that match
+        if not row1[0].endswith(tuple(logExtensions)):
+            with fTested.get_lock():
+                fTested.value += 1
+            for row2 in dbdData:
+                if row1[0] == row2[0] and row1[1] == row2[1]:  # Compare file names and hashes
+                    fOK += 1
+                elif row1[0] == row2[0] and row1[1] != row2[1]:
+                    result = [
+                        "\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                        "!!!!!!!!!!!!!!" + "\nDiscrepancy in file hash of "
+                                           "'{}'".format(row1[0]), "Hash from Database 1: {}".format(row1[1]),
+                        "Hash from Database "
+                        "2: {}\n".format(row2[1]) + "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                                                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" + "\n"]
+    resultQ.put(result)
+    return result
+
+
+def dCompareAll(dbaData, dbdData, resultQ, fTested):
+    fOK = 0
+    result = []
+
+    for row1 in dbaData:
         with fTested.get_lock():
             fTested.value += 1
-        for row2 in db2_dat:
+        for row2 in dbdData:
             if row1[0] == row2[0] and row1[1] == row2[1]:  # Compare file names and hashes
                 fOK += 1
             elif row1[0] == row2[0] and row1[1] != row2[1]:
-                discrepanc = ["\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                              "!!!!!!!!!!!!!!" + "\nDiscrepancy in file hash of "
-                              "'{}'".format(row1[0]), "Hash from Database 1: {}".format(row1[1]), "Hash from Database "
-                              "2: {}\n".format(row2[1]) + "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                                                          "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" + "\n"]
-    discrepancy_q.put(discrepanc)
-    return discrepanc
+                result = [
+                    "\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    "!!!!!!!!!!!!!!" + "\nDiscrepancy in file hash of "
+                                       "'{}'".format(row1[0]), "Hash from Database 1: {}".format(row1[1]),
+                    "Hash from Database "
+                    "2: {}\n".format(row2[1]) + "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                                                "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" + "\n"]
+    resultQ.put(result)
+    return result
 
 
 if __name__ == '__main__':
-    multiprocessing.freeze_support()
+    choice = uC()
+    mp.freeze_support()
 
     # Create and start processes
     processes = []
-    num_processes = min(multiprocessing.cpu_count(),
-                        len(db1_data) // num_cores)  # Get the number of available CPU cores or entries in the databases
+    # Get the number of available CPU cores or entries in the databases
+    num_processes = min(mp.cpu_count(), len(db1D) // cores)
+
     for i in range(num_processes):
-        p = multiprocessing.Process(target=compare_data,
-                                    args=(db1_data_sets[i], db2_data_sets[i], discrepancy_queue, tested_files))
+        if choice:
+            p = mp.Process(target=dCompareAll, args=(db1_data_sets[i], db2_data_sets[i], resultQu, tested_files))
+        else:
+            p = mp.Process(target=dCompareSmart, args=(db1_data_sets[i], db2_data_sets[i], resultQu, tested_files))
         processes.append(p)
         p.start()
 
@@ -98,7 +146,7 @@ if __name__ == '__main__':
     # Retrieve the discrepancies from the queue
     discrepancies = []
     for i in range(num_processes):
-        discrepancies += discrepancy_queue.get()
+        discrepancies += resultQu.get()
 
     # Print all the discrepancies
     for discrepancy in discrepancies:
@@ -106,8 +154,8 @@ if __name__ == '__main__':
 
     # Print the number of files tested
     ok_files = tested_files.value - len(discrepancies)
-    print("Total files tested: {}\nFiles OK: {}\nFiles with discrepancies: {}\n".format(tested_files.value, ok_files,
-                                                                                        len(discrepancies)))
+    print("\nTotal files tested: {}\nFiles OK: {}\nFiles with discrepancies: {}\n".format(tested_files.value, ok_files,
+                                                                                          len(discrepancies)))
 
     # Close the connection to the databases
     db1.close()
