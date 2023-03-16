@@ -1,4 +1,3 @@
-# Import necessary modules
 import os
 import zlib
 import sqlite3
@@ -30,7 +29,8 @@ cursor.execute("CREATE TABLE crc32 (file_name TEXT, crc32 TEXT, hash_time TEXT)"
 hashes = []
 
 # Create a thread pool
-threads = []
+thread_pool = []
+lock = threading.Lock()
 
 
 def extractFP(string):
@@ -48,23 +48,36 @@ def hash_file(file_name):
             # Get the current time
             current_time = datetime.now()
 
+            # Acquire the lock
+            lock.acquire()
+
             # Store the hash in the list
             hashes.append((file_name, file_hash, current_time))
+
+            # Release the lock
+            lock.release()
     except PermissionError as e:
         print(f"\nFile reading failed: '{extractFP(str(e))}'")
 
 
+# Create a generator to iterate through the directory tree
+def list_files():
+    for root, dirs, files in os.walk("C:/Windows"):
+        for file in files:
+            yield os.path.join(root, file)
+
+
 # Iterate through the directory tree
-for root, dirs, files in os.walk("C:/Windows"):
-    # Iterate through the list of files
-    for file in files:
-        # Create a thread for each file
-        t = threading.Thread(target=hash_file, args=(os.path.join(root, file),))
-        threads.append(t)
-        t.start()
+for file_name in list_files():
+    # Create a thread for each file
+    thread_pool.append(threading.Thread(target=hash_file, args=(file_name,)))
+
+# Start all the threads
+for thread in thread_pool:
+    thread.start()
 
 # Wait for all the threads to finish
-for thread in threads:
+for thread in thread_pool:
     thread.join()
 
 # Store the hashes in the database
