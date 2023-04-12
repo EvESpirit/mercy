@@ -61,11 +61,13 @@ tested_files = mp.Value('i', 0)
 # Create a global variable to store user input
 choice = None
 
+
 # Ask the user for input
 def uC():
     global choice
-    choice = input("Do you wish to scan log extensions as well? These are changed often by the system internally and hence "
-              "are very likely to show up during scans. (y/n): ")
+    choice = input(
+        "Do you wish to scan log extensions as well? These are changed often by the system internally and hence "
+        "are very likely to show up during scans. (y/n): ")
 
     if choice == "y" or choice == "Y":
         print("\nLog extensions will be scanned.")
@@ -74,51 +76,59 @@ def uC():
         print("\nLog extensions will not be scanned.")
         return False
 
-# Create multiple processes to compare the data
+
+# Update the dCompareSmart function to use dictionary-based lookups
 def dCompareSmart(dbaData, dbdData, resultQ, fTested):
     fOK = 0
     result = []
-    logExtensions = set(['.evtx', '.log', '.txt', '.db'])  # Create a set of extensions
+    logExtensions = {'.evtx', '.log', '.txt', '.db', '.DATA', '.BTR', '.MAP', '.xml', '.chk', '.edb', '.jfm', '.etl'}
 
-    for row1 in dbaData:
-        # Check for file extensions and skip any that match
-        if not row1[0].endswith(tuple(logExtensions)):
-            with fTested.get_lock():
-                fTested.value += 1
-            for row2 in dbdData:
-                if row1[0] == row2[0] and row1[1] == row2[1]:  # Compare file names and hashes
-                    fOK += 1
-                elif row1[0] == row2[0] and row1[1] != row2[1]:
-                    result = [
-                        "\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                        "!!!!!!!!!!!!!!" + "\nDiscrepancy in file hash of "
-                                           "'{}'".format(row1[0]), "Hash from Database 1: {}".format(row1[1]),
-                        "Hash from Database "
-                        "2: {}\n".format(row2[1]) + "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                                                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" + "\n"]
+    db1_dict = {row[0]: row[1] for row in dbaData if not row[0].endswith(tuple(logExtensions))}
+    db2_dict = {row[0]: row[1] for row in dbdData if not row[0].endswith(tuple(logExtensions))}
+
+    with fTested.get_lock():
+        fTested.value += len(db1_dict)
+
+    for file, hash1 in db1_dict.items():
+        hash2 = db2_dict.get(file)
+        if hash2 is not None:
+            if hash1 == hash2:
+                fOK += 1
+            else:
+                result.append("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                              "!!!!!!!!!!!!!!" + "\nDiscrepancy in file hash of '{}'\n".format(file) +
+                              "Hash from Database 1: {}".format(hash1) +
+                              "\nHash from Database 2: {}\n".format(hash2) +
+                              "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                              "!!!!!!!!!!!!!!" + "\n")
+
     resultQ.put(result)
     return result
 
 
+# Update the dCompareAll function to use dictionary-based lookups
 def dCompareAll(dbaData, dbdData, resultQ, fTested):
     fOK = 0
     result = []
 
-    for row1 in dbaData:
-        with fTested.get_lock():
-            fTested.value += 1
-        for row2 in dbdData:
-            if row1[0] == row2[0] and row1[1] == row2[1]:  # Compare file names and hashes
-                fOK += 1
-            elif row1[0] == row2[0] and row1[1] != row2[1]:
-                result = [
-                    "\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                    "!!!!!!!!!!!!!!" + "\nDiscrepancy in file hash of "
-                                       "'{}'".format(row1[0]), "Hash from Database 1: {}".format(row1[1]),
-                    "Hash from Database "
-                    "2: {}\n".format(row2[1]) + "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                                                "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" + "\n"]
-    resultQ.put(result)
+    db1_dict = {row[0]: row[1] for row in dbaData}
+    db2_dict = {row[0]: row[1] for row in dbdData}
+
+    with fTested.get_lock():
+        fTested.value += len(db1_dict)
+        for file, hash1 in db1_dict.items():
+            hash2 = db2_dict.get(file)
+            if hash2 is not None:
+                if hash1 == hash2:
+                    fOK += 1
+                else:
+                    result.append("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                                  "!!!!!!!!!!!!!!!!!!" + "\nDiscrepancy in file hash of '{}'\n".format(file) +
+                                  "Hash from Database 1: {}".format(hash1) +
+                                  "\nHash from Database 2: {}\n".format(hash2) +
+                                  "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                                  "!!!!!!!!!!!!!!!!" + "\n")
+        resultQ.put(result)
     return result
 
 
@@ -146,7 +156,9 @@ if __name__ == '__main__':
     # Retrieve the discrepancies from the queue
     discrepancies = []
     for i in range(num_processes):
-        discrepancies += resultQu.get()
+        temp_result = resultQu.get()
+        for entry in temp_result:
+            discrepancies.append(entry)
 
     # Print all the discrepancies
     for discrepancy in discrepancies:
