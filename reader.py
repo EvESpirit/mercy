@@ -81,7 +81,8 @@ def uC():
 def dCompareSmart(dbaData, dbdData, resultQ, fTested):
     fOK = 0
     result = []
-    logExtensions = {'.evtx', '.log', '.txt', '.db', '.DATA', '.BTR', '.MAP', '.xml', '.chk', '.edb', '.jfm', '.etl'}
+    logExtensions = {'.evtx', '.log', '.txt', '.db', '.DATA', '.BTR', '.MAP', '.xml', '.chk', '.edb', '.jfm', '.etl',
+                 '.dat', '.meta', '.old'}
 
     db1_dict = {row[0]: row[1] for row in dbaData if not row[0].endswith(tuple(logExtensions))}
     db2_dict = {row[0]: row[1] for row in dbdData if not row[0].endswith(tuple(logExtensions))}
